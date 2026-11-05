@@ -8,22 +8,18 @@
 static NSString *const PLATFORM_CHANNEL = @"dev.fluttercommunity.plus/share";
 
 static UIViewController *RootViewController(void) {
-  if (@available(iOS 13, *)) { // UIApplication.keyWindow is deprecated
-    NSSet *scenes = [[UIApplication sharedApplication] connectedScenes];
-    for (UIScene *scene in scenes) {
-      if ([scene isKindOfClass:[UIWindowScene class]]) {
-        NSArray *windows = ((UIWindowScene *)scene).windows;
-        for (UIWindow *window in windows) {
-          if (window.isKeyWindow) {
-            return window.rootViewController;
-          }
+  NSSet *scenes = [[UIApplication sharedApplication] connectedScenes];
+  for (UIScene *scene in scenes) {
+    if ([scene isKindOfClass:[UIWindowScene class]]) {
+      NSArray *windows = ((UIWindowScene *)scene).windows;
+      for (UIWindow *window in windows) {
+        if (window.isKeyWindow) {
+          return window.rootViewController;
         }
       }
     }
-    return nil;
-  } else {
-    return [UIApplication sharedApplication].keyWindow.rootViewController;
   }
+  return nil;
 }
 
 static UIViewController *
@@ -377,14 +373,14 @@ activityTypesForStrings(NSArray<NSString *> *activityTypeStrings) {
                       withSubject:shareTitle
                          withText:shareText
             excludedActivityTypes:excludedActivityTypes
-                   withController:rootViewController
+                   withController:topViewController
                          atSource:originRect
                          toResult:result];
       } else if (shareText) {
         [self shareText:shareText
                           subject:shareTitle
             excludedActivityTypes:excludedActivityTypes
-                   withController:rootViewController
+                   withController:topViewController
                          atSource:originRect
                          toResult:result];
       } else {
@@ -415,35 +411,35 @@ activityTypesForStrings(NSArray<NSString *> *activityTypeStrings) {
     [activityViewController setValue:subject forKey:@"subject"];
   }
 
-  activityViewController.popoverPresentationController.sourceView =
-      controller.view;
-  BOOL isCoordinateSpaceOfSourceView =
-      CGRectContainsRect(controller.view.frame, origin);
-
   // Check if this is actually an iPad
   BOOL isIpad = ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad);
 
-  // Before Xcode 26 hasPopoverPresentationController is true for iPads and false for iPhones.
-  // Since Xcode 26 is true both for iPads and iPhones, so additional check was added above.
-  BOOL hasPopoverPresentationController =
-      [activityViewController popoverPresentationController] != NULL;
-  if (isIpad && hasPopoverPresentationController &&
-      (!isCoordinateSpaceOfSourceView || CGRectIsEmpty(origin))) {
-    NSString *sharePositionIssue = [NSString
-        stringWithFormat:
-            @"sharePositionOrigin: argument must be set, %@ must be non-zero "
-            @"and within coordinate space of source view: %@",
-            NSStringFromCGRect(origin),
-            NSStringFromCGRect(controller.view.bounds)];
+  // Before Xcode 26, popoverPresentationController was non-nil only on iPad.
+  // Since Xcode 26 it is non-nil on iPhone as well, where it is a private
+  // _UIActivityViewControllerPresentationController rather than a real
+  // UIPopoverPresentationController. Configuring it on iPhone pushes
+  // UIActivityViewController onto the anchored presentation path, so restrict
+  // every popover configuration to iPad.
+  UIPopoverPresentationController *popover =
+      activityViewController.popoverPresentationController;
 
-    result([FlutterError errorWithCode:@"error"
-                               message:sharePositionIssue
-                               details:nil]);
-    return;
-  }
+  if (isIpad && popover != nil) {
+    popover.sourceView = controller.view;
 
-  if (!CGRectIsEmpty(origin)) {
-    activityViewController.popoverPresentationController.sourceRect = origin;
+    // Flutter sends sharePositionOrigin in global (window) coordinates.
+    // Convert to the source view's coordinate space for sourceRect.
+    CGRect sourceRect = origin;
+    if (controller.view.window && !CGRectIsEmpty(origin)) {
+      sourceRect = [controller.view convertRect:origin fromView:nil];
+    }
+    // On iPad, popover requires a non-empty sourceRect. Use center of the view
+    // when no valid origin was provided or conversion isn't possible.
+    if (CGRectIsEmpty(sourceRect)) {
+      CGRect bounds = controller.view.bounds;
+      sourceRect = CGRectMake(CGRectGetMidX(bounds) - 1.0,
+                              CGRectGetMidY(bounds) - 1.0, 2.0, 2.0);
+    }
+    popover.sourceRect = sourceRect;
   }
 
   activityViewController.completionWithItemsHandler =
